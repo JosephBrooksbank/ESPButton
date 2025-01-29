@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: CC0-1.0
  */
 
+#include "dirigera.h"
 #include "driver/gpio.h"
 #include "esp_err.h"
 #include "esp_event.h"
@@ -55,8 +56,7 @@ static int retry_num = 0;
 
 // request stuff!
 #define MAX_HTTP_RECV_BUFFER 512
-#define MAX_HTTP_OUTPUT_BUFFER 11676
-static char response_buffer[MAX_HTTP_OUTPUT_BUFFER] = {0};
+#define MAX_HTTP_OUTPUT_BUFFER 15000
 #define HTTPTAG "http_client"
 
 
@@ -65,9 +65,7 @@ static char response_buffer[MAX_HTTP_OUTPUT_BUFFER] = {0};
 
 ///// begin function declarations
 
-// this function is just for debugging/logging info at every step of the http process 
-// NOT for actually sending requests.
-esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
+esp_err_t __http_event_handler(esp_http_client_event_t *evt) {
   static char *output_buffer; // buffer to store response of http request from
                               // event handler
   static int output_len;      // store number of bytes read
@@ -158,6 +156,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
 
 static void http_rest_with_url(void) {
 
+    char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER] = {0};
     /**
      * NOTE: All the configuration parameters for http_client must be specified either in URL or as host and path parameters.
      * If host and path parameters are not set, query parameter will be ignored. In such cases,
@@ -172,8 +171,8 @@ static void http_rest_with_url(void) {
         /* .port = 8443, */
         .buffer_size_tx = 2142,
         /* .query = "esp", */
-        .event_handler = _http_event_handler,
-        .user_data = response_buffer,
+        .event_handler = __http_event_handler,
+        .user_data = local_response_buffer,
         .disable_auto_redirect = true,
 
     };
@@ -187,7 +186,7 @@ static void http_rest_with_url(void) {
         ESP_LOGI(HTTPTAG, "HTTP GET Status = %d, content_length = %"PRId64,
                  esp_http_client_get_status_code(client),
                  esp_http_client_get_content_length(client));
-        cJSON *json = cJSON_Parse(response_buffer);
+        cJSON *json = cJSON_Parse(local_response_buffer);
         cJSON *element = NULL;
         
         if (cJSON_IsArray(json)) {
@@ -223,6 +222,20 @@ static void http_task_get_data(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
+static void print_light_ids(void *pvParameters) {
+    uint8_t size = 0;
+    struct Light* lights = get_lights(&size);
+    if (size == 0 || !lights ) {
+        ESP_LOGE(TAG, "failed to find any lights!");
+    }
+    else {
+        for (uint8_t i = 0; i < size; i++) {
+            ESP_LOGI(TAG, "Light id: %s", lights[i].id);
+        } 
+    }
+    free_lights(lights, size);
+    vTaskDelete(NULL);
+}
 
 static void event_handler(void *arg, esp_event_base_t event_base,
                           int32_t event_id, void *event_data) {
@@ -345,7 +358,8 @@ void app_main(void) {
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   wifi_init_sta();
 
-    xTaskCreate(&http_task_get_data, "http_task_get_data", 8192, NULL, 5, NULL);
+    xTaskCreate(&http_task_get_data, "http_task_get_data", 20000, NULL, 5, NULL);
+    xTaskCreate(&print_light_ids, "lights_get_data", 8192, NULL, 5, NULL);
 
   while (1) {
     /* ESP_LOGI(TAG, "Turning the LED %d %d %d!", colors[0], colors[1],
