@@ -6,7 +6,9 @@
 #include "esp_log.h"
 #include "cJSON.h"
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define HTTPTAG "http_client"
 #define MAX_HTTP_OUTPUT_BUFFER 15000
@@ -109,26 +111,47 @@ esp_http_client_handle_t create_client(const char* url) {
     .disable_auto_redirect = true,
   };
 
+    ESP_LOGI(DIRIGERATAG, "Created client with url %s", url);
   esp_http_client_handle_t client = esp_http_client_init(&config);
   esp_http_client_set_header(client, "Authorization", "Bearer "TOKEN);
   return client;
 };
 
-cJSON* get_json(esp_http_client_handle_t client ) {
+char* send_request(esp_http_client_handle_t client) {
     esp_err_t err = esp_http_client_perform(client);
     
     if (err == ESP_OK) {
         // PRId64 is a macro that expands to the printf formatter for 64 bit ints on this architecture
-        ESP_LOGI(HTTPTAG, "HTTP GET Status = %d, content_length = %"PRId64,
+        ESP_LOGI(HTTPTAG, "HTTP Status = %d, content_length = %"PRId64,
                  esp_http_client_get_status_code(client),
                  esp_http_client_get_content_length(client));
-        cJSON *json = cJSON_Parse(response_buffer);
-        return json;
+        return response_buffer;
     } else {
         ESP_LOGE(HTTPTAG, "HTTP GET request failed: %s", esp_err_to_name(err));
     }
     return NULL;
 }
+
+cJSON* get_json(esp_http_client_handle_t client ) {
+
+    char* response = send_request(client);
+    if (response) {
+        cJSON *json = cJSON_Parse(response);
+        return json;
+    }
+    return NULL;
+}
+
+
+int patch(esp_http_client_handle_t client, char* body) {
+    esp_http_client_set_method(client, HTTP_METHOD_PATCH);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, body, strlen(body));
+
+    send_request(client);
+    return esp_http_client_get_status_code(client);
+}
+
 
 
 #define URL "https://"IP":8443/v1"
@@ -187,4 +210,33 @@ void free_lights(struct Light* lights, uint8_t size) {
         free(lights[i].id);
     }
     free(lights);
+}
+
+void set_light_on(struct Light *light, bool isOn) {
+    char* url;
+    if (0 > asprintf(&url, URL"/devices/%s", light->id)) {
+        ESP_LOGE(DIRIGERATAG, "failed to create url string in set_light_on");
+        abort();
+    }
+    ESP_LOGI(DIRIGERATAG, "set_light_on url is %s", url);
+
+    char * enable = isOn ? "true" : "false";
+    char* body;
+    if (0 > asprintf(&body, "[{\"attributes\": { \"isOn\": %s}}]", enable)) {
+        ESP_LOGE(DIRIGERATAG, "failed to create body string in set_light_on");
+        free(url);
+        abort();
+    }
+
+    esp_http_client_handle_t client = create_client(url);
+    patch(client,body);
+
+    if (esp_http_client_get_status_code(client)  >=300 ) {
+        ESP_LOGE(DIRIGERATAG, "set_light_on request failed with status code %d, body %s",
+                 esp_http_client_get_status_code(client),
+                 response_buffer);
+    }
+    free(url);
+    free(body);
+    esp_http_client_cleanup(client);
 }
