@@ -32,6 +32,7 @@
 #include <string.h>
 #include "esp_tls.h"
 #include "cJSON.h"
+#include "ENV.c"
 #include "cJSON_Utils.h"
 ///// config
 
@@ -54,8 +55,13 @@ static int retry_num = 0;
 
 // request stuff!
 #define MAX_HTTP_RECV_BUFFER 512
-#define MAX_HTTP_OUTPUT_BUFFER 2048
+#define MAX_HTTP_OUTPUT_BUFFER 11676
+static char response_buffer[MAX_HTTP_OUTPUT_BUFFER] = {0};
 #define HTTPTAG "http_client"
+
+
+// light stuff!
+#define LIGHTTAG "lights!"
 
 ///// begin function declarations
 
@@ -101,6 +107,7 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
                 } else {
                     int content_len = esp_http_client_get_content_length(evt->client);
                     if (output_buffer ==  NULL) {
+                        ESP_LOGI(HTTPTAG, "allocating memory for output buffer...");
                         output_buffer = (char*) calloc(content_len+1, sizeof(char));
                         output_len = 0;
                         if (output_buffer == NULL) {
@@ -150,9 +157,6 @@ esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
 
 
 static void http_rest_with_url(void) {
-    // declare a local buffer with size (max buffer + 1) to prevent out of bounds access when used 
-    // by functions like strlen() which expect a null end character
-    char local_response_buffer[MAX_HTTP_OUTPUT_BUFFER + 1] = {0};
 
     /**
      * NOTE: All the configuration parameters for http_client must be specified either in URL or as host and path parameters.
@@ -162,15 +166,19 @@ static void http_rest_with_url(void) {
      * if URL as well as host and path are specified, host & path take precedence
      */
     esp_http_client_config_t config = {
-        .host = "httpbin.org",
-        .path = "/get",
-        .query = "esp",
+        .url = "https://192.168.0.29:8443/v1/devices",
+        /* .host = "https:", */
+        /* .path = "/devices", */
+        /* .port = 8443, */
+        .buffer_size_tx = 2142,
+        /* .query = "esp", */
         .event_handler = _http_event_handler,
-        .user_data = local_response_buffer,
+        .user_data = response_buffer,
         .disable_auto_redirect = true,
 
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_http_client_set_header(client, "Authorization", "Bearer "TOKEN);
 
     // GET
     esp_err_t err = esp_http_client_perform(client);
@@ -179,14 +187,32 @@ static void http_rest_with_url(void) {
         ESP_LOGI(HTTPTAG, "HTTP GET Status = %d, content_length = %"PRId64,
                  esp_http_client_get_status_code(client),
                  esp_http_client_get_content_length(client));
-        cJSON *json = cJSON_Parse(local_response_buffer);
-        cJSON *origin = cJSON_GetObjectItem(json, "origin");
-        ESP_LOGI(HTTPTAG, "origin is %s", origin->valuestring);
+        cJSON *json = cJSON_Parse(response_buffer);
+        cJSON *element = NULL;
+        
+        if (cJSON_IsArray(json)) {
+            ESP_LOGI(HTTPTAG, "json is array!");
+            cJSON_ArrayForEach(element, json) {
+                cJSON *type = cJSON_GetObjectItem(element, "type");
+                if (strcmp(type->valuestring, "light") == 0) {
+                    cJSON *attributes = cJSON_GetObjectItem(element, "attributes");
+                    cJSON* name = cJSON_GetObjectItem(attributes, "customName");
+                    ESP_LOGI(LIGHTTAG, "found light %s", name->valuestring );
+                } else {
+                    ESP_LOGW(LIGHTTAG, "found element of type %s", type->valuestring);
+                }
+                
+            } 
+
+        } else {
+            ESP_LOGI(HTTPTAG, "json is not array?");
+        }
+
     } else {
         ESP_LOGE(HTTPTAG, "HTTP GET request failed: %s", esp_err_to_name(err));
     }
     // this is why we add 1 byte to the buffer size. if the whole buffer was filled by the response, strlen would overflow
-    ESP_LOG_BUFFER_HEX(HTTPTAG, local_response_buffer, strlen(local_response_buffer));
+    /* ESP_LOG_BUFFER_HEX(HTTPTAG, response_buffer, strlen(response_buffer)); */
 
     esp_http_client_cleanup(client);
 }

@@ -1,3 +1,5 @@
 .cache/*
 build/*
 managed_components/*
+ENV.c
+
