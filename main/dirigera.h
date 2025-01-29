@@ -8,6 +8,7 @@
 
 struct Light {
   char *id; 
+  uint32_t id_length;
 };
 
 

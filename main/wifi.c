@@ -1,5 +1,11 @@
+#include "esp_err.h"
+#include "esp_event.h"
+#include "esp_event_base.h"
+#include "esp_netif.h"
+#include "esp_netif_types.h"
 #include "esp_wifi.h"
 #include "esp_log.h"
+#include "esp_wifi_default.h"
 #include "wifi.h"
 
 // wifi stuff!
@@ -9,6 +15,7 @@ static EventGroupHandle_t wifi_event_group;
 #define WIFI_FAIL_BIT BIT1
 #define MAX_RETRY 5
 static int retry_num = 0;
+static esp_netif_t *sta_netif = NULL;
 
 static void event_handler(void *arg, esp_event_base_t event_base,
                           int32_t event_id, void *event_data) {
@@ -33,10 +40,34 @@ static void event_handler(void *arg, esp_event_base_t event_base,
   }
 }
 
+esp_err_t wifi_disconnect(void) {
+  ESP_ERROR_CHECK(esp_event_handler_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler));
+  ESP_ERROR_CHECK(esp_event_handler_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, &event_handler));
+  return esp_wifi_disconnect();
+}
+
+void wifi_stop(){
+  esp_err_t err = esp_wifi_stop();
+  if (err == ESP_ERR_WIFI_NOT_INIT) {
+    return;
+  }
+  ESP_ERROR_CHECK(err);
+  ESP_ERROR_CHECK(esp_wifi_deinit());
+  ESP_ERROR_CHECK(esp_wifi_clear_default_wifi_driver_and_handlers(sta_netif));
+  esp_netif_destroy(sta_netif);
+  sta_netif = NULL;
+
+}
+
+void wifi_shutdown() {
+  wifi_disconnect();
+  wifi_stop();
+}
+
 void wifi_init_sta(void) {
   wifi_event_group = xEventGroupCreate();
   ESP_ERROR_CHECK(esp_netif_init());
-  esp_netif_create_default_wifi_sta();
+  sta_netif = esp_netif_create_default_wifi_sta();
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&cfg));
